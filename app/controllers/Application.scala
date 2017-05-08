@@ -18,55 +18,84 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 class Application extends Controller {
 
-  def index = Action {
-    Ok(views.html.index("Your new application is ready."))
-  }
 
   // We've been tasked with the very important job of building an endpoint to store
   // transactions at a register. A transaction consists of an item name, and a cost.
+  // We've been provided several DAL methods for storing transactions by our extremely trusting backend
+  // team - our job starts and ends with the controller.
+
+  // We're going to tackle this by doing a rough implementation, and then making
+  // successive improvements. We'll handle content-types, safe and unsafe way to handle JSON validation,
+  // dealing with potential failures on interacting with databases,
+  // and finally arrive on a general pattern for writing safe and concise Controllers.
+  // We're not going to cover authentication, sessions, or chaining actions together.
+  // Along the way we'll discuss case classes, Options, and Eithers, as well
+  // as provide a cursory discussion of pattern matching. A series of routes are defined in
+  // conf/routes, which map the HTTP requests to the controllers. Before each controller implementation
+  // are a set of curl commands that can be used to test out the endpoint.
 
   // Let's make a first stab at it: we'll take the request body, convert it to a string, and we send it to the database.
-  // On it's face this has some problems, but let's enumerate them:
+  // In Scala Play, Actions are the way we way respond to HTTP requests. An HTTP request occurs, it is routed to an
+  // Action contained within a Controller, and the Action is performed. For each action, we defined a function block that starts with
+  // `request: Request[AnyContent] =>` which can be read as "A function which accepts a parameter 'request' of type
+  // Request parameterized with AnyContent." The type annotation `:Request[AnyContent]` is not required, but added
+  // for clarity's sake.
 
-  // 1. we're not doing any validation on the string to see if it is actually json. 2.
-  // if it is json, we're not doing any validation on its contents. 3. this actually
-  // blows up if the client sends "Content-Type: application/json",
-  // because request.body.asText depends on "Content-Type: text/plain" - when we try to
-  // access the value within the Option[String] with maybeText.get, an exception occurs.
+  // Unlike many other languages, Scala places type annotations after values, not before them. In Java, you let
+  // the compiler know that you're declaring a new variable by stating the type - `type varName = ...`.
+  // Scala's preference towards optional type annotations by using type inference made it need another symbol to
+  // alert the compiler to a new declaration. They settled on val and var, and placed the type annotation
+  // after the variable name: `val varName: Type = ...`
 
-  // In scala, `Option[String]` is a type which has two possible states: Either it has a string, or it has no value.
-  // It's analogous to `null`, except with some important improvements. Rather than just blowing up when you
-  // try to access the value like `null` does, Option implements a set of functions (map, flatMap,
-  // fold, filter) that allow you to conditionally run computations on the string inside of the option.
-  //
-  // Unfortunately, our v1 doesn't use any of those: it just tries to access the value directly, and throws
-  // an exception if that value isn't present. `request.body.asText` will only return text if the Content-Type
-  // specified in the request header is text/plain.
+  //======================================================================================================================================
+  // Side note: Idiomatic scala uses minimal type annotations. This can be make the code seem a little terse, but becomes natural
+  // and preferred over time. If you don't know a value's type, tooling for Scala does an excellent job filling in the gap-
+  // If you're using intellij on windows and want to know the type of a variable, control+q will bring it up.
+  //======================================================================================================================================
 
   // good curl:
   //    curl -XPOST -H "Content-Type: text/plain" -d "{\"item\":\"bike\", \"cost\":5.00}" localhost:9000/api/store/v1
   // curl that fails with a 500 error:
   //    curl -XPOST -H "Content-Type: application/json" -d "{\"item\":\"bike\", \"cost\":5.00}" localhost:9000/api/store/v1
-  // curl that succeeds, but sends garbage to the database:
-  //    curl -XPOST -H "Content-Type: text/plain" -d "little bobby tables starts his first job" localhost:9000/api/store/v1
+  // curl that succeeds, but sends garbage to the data access layer:
+  //    curl -XPOST -H "Content-Type: text/plain" -d "Little bobby tables goes to work" localhost:9000/api/store/v1
 
   def storeTransaction_v1: Action[AnyContent] = Action {
-    request =>
+    request: Request[AnyContent] =>
       val maybeText: Option[String] = request.body.asText
       DAL.storeString(maybeText.get)
       Ok("")
   }
 
-  // To fix the first glaring issue: we want to check if the request is JSON, so we should check the body for JSON instead of text.
+  // On its face, this implementation has at least one merit - it's concise.
+  // Unfortunately, on its face this has some serious problems, too. Let's enumerate them:
+
+  // 1. We're not doing any validation on the string to see if it is actually json.
+  // 2. If it is json, we're not doing any validation on its contents.
+  // 3. There's also a Play specific concern - this actually blows up if the client sends "Content-Type: application/json",
+  // because request.body.asText is an option that depends on the content type being text. When we try to
+  // access the value within the Option[String] with maybeText.get, an exception occurs.
+
+  // In scala, `Option[String]` is a type which has two possible states: Either Option[String] has a string, or it has no value.
+  // It's analogous to `null`, except with some important improvements. Rather than just blowing up when you
+  // try to access the value like `null` does, Option implements a set of functions (map, flatMap,
+  // fold, filter) that allow you to conditionally run computations on the value inside of the option.
+  //
+  // Unfortunately, our v1 doesn't use any of those: it just tries to access the value directly, and throws
+  // an exception if that value isn't present. `request.body.asText` will only return text if the Content-Type
+  // specified in the request header is text/plain.
+
+
+  // To fix the first glaring issue: The controller accepts JSON, not text. Let's change that:
 
   // curl that succeeds:
-  //    curl -XPOST -H "Content-Type: application/json" -d "{\"item\":\"bike\", \"cost\":5.00}" localhost:9000/api/store/v2
+  //    curl -XPOST -H "Content-Type: application/json" -d "{\"item\":\"bike\", \"cost\":5.00}" -v localhost:9000/api/store/v2
 
   // curl that sends an appropriate 400 error for invalid JSON:
   //    curl -XPOST -H "Content-Type: application/json" -d "bad json {\"item\":\"bike\", \"cost\":5.00}" -v localhost:9000/api/store/v2
 
   // curl that fails with a 500 error on `maybeJson.get`:
-  //    curl -XPOST -H "Content-Type: text/plain" -d "{\"item\":\"bike\", \"cost\":5.00}" localhost:9000/api/store/v2
+  //    curl -XPOST -H "Content-Type: text/plain" -d "{\"item\":\"bike\", \"cost\":5.00}" -v localhost:9000/api/store/v2
 
 
   def storeTransaction_v2: Action[AnyContent] = Action {
@@ -78,24 +107,34 @@ class Application extends Controller {
       Ok("")
   }
 
-  // Now we want to stop the endpoint from returning a 500 error if it receives the wrong
-  // content-type. To do that, we need to use some of the functions defined on Map.
+  // Now to the second issue - we want the endpoint from returning a 500 error if it receives the wrong
+  // content-type. To do that, we need to use some of the functions defined on Option, namely Map and getOrElse
 
-  // Here we introduce two functions on Option: map and getOrElse. Option.map is a function
-  // which accepts a function, and conditionally applies that function against the contents of
+  // Option.map is a function which accepts a function, and conditionally applies that function against the contents of
   // the Option. If there is a value in the Option, the function is run.
   // If the Option is empty, it performs no operation. Lest you think there's any magic going on, here's the full
-  // definion of Option.map:
+  // definition of Option.map:
   // `final def map[B](f: A => B): Option[B] =
   //    if (isEmpty) None else Some(f(this.get))`
   // where A is the type of the option (e.g. String for an Option[String], and B is whichever type the function returns.
   //
-  // getOrElse returns either the contents of the Option, or if the option isEmpty, it returns a default value which you passed in.
+  // getOrElse returns either the contents of the Option when the option is nonEmpty. When the option isEmpty,
+  // it returns a default value which you passed in. Again, the function definition:
   //  `final def getOrElse[B >: A](default: => B): B =
   //    if (isEmpty) default else this.get`
   //
-  // The full definition of Option is available here, in all of it's glorious simplicity:
+  // The full definition of Option is available here, and is simple enough that it's worth checking out:
   // https://github.com/scala/scala/blob/v2.12.2/src/library/scala/Option.scala#L1
+
+
+  // curl that succeeds:
+  //    curl -XPOST -H "Content-Type: application/json" -d "{\"item\":\"bike\", \"cost\":5.00}" -v localhost:9000/api/store/v2
+
+  // curl that sends an appropriate 400 error for invalid JSON:
+  //    curl -XPOST -H "Content-Type: application/json" -d "bad json {\"item\":\"bike\", \"cost\":5.00}" -v localhost:9000/api/store/v2
+
+  // curl that returns with a 400 error because of the content type:
+  //    curl -XPOST -H "Content-Type: text/plain" -d "{\"item\":\"bike\", \"cost\":5.00}" -v localhost:9000/api/store/v2
 
   def storeTransaction_v3: Action[AnyContent] = Action {
     request =>
@@ -178,16 +217,11 @@ class Application extends Controller {
   // be have a pattern that allows us to say: "Parse this JSON request as case class Transaction. If that fails, return
   // a parse error. If that succeeds, perform these actions with that transaction."
 
-  // 3. Also, our parse errors are html. For a JSON API, that's pretty busted. It would be nicer still if
-  // we returned JSON in response to parse errors.
-
-  // 4. We're still not handling cases where the database operation fails.
+  // 3. We're still not handling cases where the database operation fails.
 
   // Play provides a built in means to handle issue #1 - body parsers. Instead of returning a body of
   // AnyContent, we can see that the body is now a JsValue. However, if invalid JSON is passed in, the
-  // controller body is never invoked - an error response is sent back to the client. Unfortunately,
-  // we haven't seen a way to coerce the error response into JSON - it defaults to HTML, and as far
-  // as we've seen, we have to write a custom parser. Fortunately that's not particularly difficult.
+  // controller body is never invoked - an error response is sent back to the client.
 
   // Here, we solve issue #1 - we're passing a tolerant json parser into the action - this allows us to stop mapping over
   // the "maybeJson" value.
@@ -255,16 +289,21 @@ class Application extends Controller {
 
   // If we wanted to be more explicit about converting the Either[Error, Result] to a Result, we could use
   // function composition to combine our block with eitherToResult. The type signature of our controller block is
-  // Request[Transaction] => Either[Error, Result]. The type signature of eitherToResult is Either[Error, Result].
-  // You can imagine chaining these together: Request[Transaction] => Either[Error, Result] => Result. In scala,
-  // we can combine our two functions to create a single function with the type signature Request[Transaction] => Result, using the
-  // andThen function. This is called function composition. An example:
+  // Request[Transaction] => Either[Error, Result], read as "a function which accepts a Request parameterized by Transation
+  // and returns an Either left Error, right Result". The type signature of eitherToResult is Either[Error, Result] => Result,
+  // which can be read as "eitherToResult takes an either left Error, right Result and returns a Result."
+  //
+  // You can imagine chaining these type signatures together: Request[Transaction] => Either[Error, Result] => Result.
+  // In functional languages, we can chain these two functions together to create a new function with the
+  // type signature Request[Transaction] => Result. This is called function composition. In Scala we can use the
+  // andThen function. In pratice:
   def storeTransaction_v8_alternative: Action[Transaction] = Action(validateJson(transactionReads))({
     r: Request[Transaction] => DAL.storeTransaction(r.body) map { _ => Ok("") }
   } andThen eitherToResult)
 
   // Note that we had to add the type annotation Request[Transaction] to the request - when we're not explicit
-  // that the request is a Request[Transaction], the compiler can't figure out the type for the function composition.
+  // that the request is a Request[Transaction] ("Request parameterized with type Transaction"), the compiler can't
+  // figure out the type for the function composition - it thinks the request type is Request[Nothing] ("Request parameterized with type Nothing.
   // This leaves me slightly preferring the implicit conversion over function composition, but it's not clear
   // that either one is superior.
 

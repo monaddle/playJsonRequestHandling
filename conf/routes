@@ -3,7 +3,6 @@
 # ~~~~
 
 # Home page
-GET     /                           controllers.Application.index
 POST     /api/store/v1               controllers.Application.storeTransaction_v1
 POST     /api/store/v2               controllers.Application.storeTransaction_v2
 POST     /api/store/v3               controllers.Application.storeTransaction_v3
@@ -16,6 +15,5 @@ POST     /api/store/v8_alt           controllers.Application.storeTransaction_v8
 POST     /api/store/v9               controllers.Application.storeTransaction_v9
 
 
-# Map static resources from the /public folder to the /assets URL path
 GET     /assets/*file               controllers.Assets.at(path="/public", file)
 
