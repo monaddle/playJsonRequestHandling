@@ -1,0 +1,21 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
+
+# Home page
+GET     /                           controllers.Application.index
+POST     /api/store/v1               controllers.Application.storeTransaction_v1
+POST     /api/store/v2               controllers.Application.storeTransaction_v2
+POST     /api/store/v3               controllers.Application.storeTransaction_v3
+POST     /api/store/v4               controllers.Application.storeTransaction_v4
+POST     /api/store/v5               controllers.Application.storeTransaction_v5
+POST     /api/store/v6               controllers.Application.storeTransaction_v6
+POST     /api/store/v7               controllers.Application.storeTransaction_v7
+POST     /api/store/v8               controllers.Application.storeTransaction_v8
+POST     /api/store/v8_alt           controllers.Application.storeTransaction_v8_alternative
+POST     /api/store/v9               controllers.Application.storeTransaction_v9
+
+
+# Map static resources from the /public folder to the /assets URL path
+GET     /assets/*file               controllers.Assets.at(path="/public", file)
+
